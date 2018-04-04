@@ -66,11 +66,6 @@ class Shell extends Adapter {
       this.receive(new TextMessage(this.user, input.trim(), 'messageId'))
     })
   }
-
-  shutdown () {
-    this.robot.shutdown()
-    return process.exit(0)
-  }
 }
 
 exports.use = robot => new Shell(robot)

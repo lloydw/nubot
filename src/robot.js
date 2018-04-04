@@ -12,6 +12,7 @@ const Listener = require('./listener')
 const Message = require('./message')
 const Middleware = require('./middleware')
 const logger = require('./logger')
+const playbook = require('nubot-playbook')
 
 const HUBOT_DEFAULT_ADAPTERS = ['campfire', 'shell']
 const HUBOT_DOCUMENTATION_SECTIONS = ['description', 'dependencies', 'configuration', 'commands', 'notes', 'author', 'authors', 'examples', 'tags', 'urls']
@@ -23,21 +24,19 @@ class Robot {
   // adapter     - A String of the adapter name.
   // httpd       - A Boolean whether to enable the HTTP daemon.
   // name        - A String of the robot name, defaults to Hubot.
-  constructor (adapterName, storageAdapter, httpd, name, alias, logLevel) {
-    logger.level = logLevel
-    logger.debug(`Robot created with adapter: ${adapterName}, storage: ${storageAdapter}, httpd: ${httpd}, name: ${name}, alias: ${alias}, logLevel: ${logLevel}`)
+  constructor (config/*adapterName, storageAdapter, httpd, name, alias, logLevel*/) {
+    this.config = Object.assign({
+      name: 'Hubot',
+      alias: false,
+      logLevel: 'info'
+    }, config);
+    logger.level = config.logLevel
+    logger.debug('Robot created with config:', config)
 
-    if (name == null) name = 'Hubot'
-    if (alias == null) alias = false
-    this.adapterPath = path.join(__dirname, 'adapters')
-
-    this.name = name
+    this.name = config.name
     this.logger = logger
     this.events = new EventEmitter()
     this.brain = new Brain(this)
-    this.alias = alias
-    this.adapter = null
-    this.storageAdapter = null
     this.Response = Response
     this.commands = []
     this.listeners = []
@@ -50,11 +49,10 @@ class Robot {
     this.globalHttpOptions = {}
 
     this.parseVersion()
-    if (httpd) this.setupExpress()
-    else this.setupNullRouter()
-
-    this.loadStorageAdapter(storageAdapter)
-    this.loadAdapter(adapterName)
+    if (this.config.httpd)
+      this.setupExpress()
+    else
+      this.setupNullRouter()
 
     this.errorHandlers = []
     this.on('error', (err, res) => this.invokeErrorHandlers(err, res))
@@ -117,7 +115,7 @@ class Robot {
     const modifiers = regexWithoutModifiers.pop()
     const regexStartsWithAnchor = regexWithoutModifiers[0] && regexWithoutModifiers[0][0] === '^'
     const pattern = regexWithoutModifiers.join('/')
-    const name = this.name.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')
+    const name = this.config.name.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')
 
     if (regexStartsWithAnchor) {
       this.logger.warning(`Anchors don’t work well with respond, perhaps you want to use 'hear'`)
@@ -128,7 +126,7 @@ class Robot {
       return new RegExp('^\\s*[@]?' + name + '[:,]?\\s*(?:' + pattern + ')', modifiers)
     }
 
-    const alias = this.alias.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')
+    const alias = this.config.alias.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')
 
     // matches properly when alias is substring of name
     if (name.length > alias.length) {
@@ -335,20 +333,19 @@ class Robot {
   //
   // Returns nothing.
   load (filepath) {
-    this.logger.debug(`Loading script/s from ${filepath}`)
+    this.logger.debug(`Loading scripts from ${filepath}`)
     if (fs.existsSync(filepath)) {
       let pathStats = fs.statSync(filepath)
       if (pathStats.isFile()) {
-        let {root, dir, base} = path.parse(filepath)
-        this.loadFile(path.join(root, dir), base)
+        let {root, dir, base} = path.parse(filepath);
+        this.loadFile(path.join(root, dir), base);
       } else {
         fs.readdirSync(filepath)
           .sort()
-          .map(file => this.loadFile(filepath, file))
+          .map(file => this.loadFile(filepath, file));
       }
     } else {
-      // TODO: reinstate after index refactored to only load single script path
-      // this.logger.error(`No file/s found at path ${filepath}`)
+      this.logger.error(`No files found at path ${filepath}`);
     }
   }
 
@@ -374,7 +371,7 @@ class Robot {
 
       if (typeof script === 'function') {
         script(this)
-        this.parseHelp(path.join(filepath, filename))
+        //this.parseHelp(path.join(filepath, filename))
       } else {
         this.logger.warning(`Expected ${full} to assign a function to module.exports, got ${typeof script}`)
       }
@@ -386,12 +383,15 @@ class Robot {
 
   // Load scripts from a specified path, relative to app root
   loadScripts (scriptsPath = 'scripts') {
-    if (!Array.isArray(scriptsPath)) scriptsPath = [scriptsPath]
+    if (!Array.isArray(scriptsPath)) {
+      scriptsPath = [scriptsPath];
+    }
     scriptsPath.forEach((scriptsPath) => {
-      scriptsPath = rootPath.resolve(scriptsPath)
-      this.logger.debug(`Loading scripts from ${scriptsPath}`)
-      if (scriptsPath[0] === '/') return this.load(scriptsPath)
-      this.load(path.resolve(rootPath, scriptsPath))
+      if (scriptsPath[0] === '/') {
+        this.load(scriptsPath);
+      } else {
+        this.load(rootPath.resolve(scriptsPath));
+      }
     })
   }
 
@@ -497,19 +497,22 @@ class Robot {
     }
   }
 
-  // Load the adapter Hubot is going to use.
+  // Load the chat adapter Hubot is going to use.
   //
   // path    - A String of the path to adapter if local.
   // adapter - A String of the adapter name to use.
   //
   // Returns nothing.
-  loadAdapter (adapter) {
-    this.logger.debug(`Loading adapter ${adapter}`)
+  loadChatAdapter (adapter) {
+    this.logger.debug(`Loading chat adapter ${adapter}`)
+    if (adapter.substring(0, 5) == 'chat/') {
+      adapter = './' + adapter
+    } else {
+      adapter = 'hubot-' + adapter
+    }
 
     try {
-      const isDefaultAdapter = Array.from(HUBOT_DEFAULT_ADAPTERS).indexOf(adapter) !== -1
-      const path = isDefaultAdapter ? `${this.adapterPath}/${adapter}` : `hubot-${adapter}`
-      this.adapter = require(path).use(this)
+      this.chatAdapter = require(adapter).use(this)
     } catch (err) {
       this.logger.error(`Cannot load adapter ${adapter} - ${err} `)
       console.error(err)
@@ -528,8 +531,20 @@ class Robot {
       this.brain.connection = null
       this.brain.emit('connected')
     } else {
+      this.logger.debug(`Loading storage adapter ${adapter}`)
       this.brain.once('loaded', () => this.brain.emit('connected')) // workaround (until adapter has connect method)
-      this.storageAdapter = require(adapter)(this)
+      if (adapter.substring(0, 8) == 'storage/') {
+        adapter = './' + adapter
+      } else {
+        adapter = 'hubot-brain-' + adapter
+      }
+      try {
+        this.storageAdapter = require(adapter)(this)
+      } catch (err) {
+        this.logger.error(`Cannot load storage adapter ${adapter} - ${err} `)
+        console.error(err)
+        process.exit(1)
+      }
     }
   }
 
@@ -605,7 +620,7 @@ class Robot {
   send (envelope/* , ...strings */) {
     const strings = [].slice.call(arguments, 1)
 
-    this.adapter.send.apply(this.adapter, [envelope].concat(strings))
+    this.chatAdapter.send.apply(this.chatAdapter, [envelope].concat(strings))
   }
 
   // Public: A helper reply function which delegates to the adapter's reply
@@ -618,7 +633,7 @@ class Robot {
   reply (envelope/* , ...strings */) {
     const strings = [].slice.call(arguments, 1)
 
-    this.adapter.reply.apply(this.adapter, [envelope].concat(strings))
+    this.chatAdapter.reply.apply(this.chatAdapter, [envelope].concat(strings))
   }
 
   // Public: A helper send function to message a room that the robot is in.
@@ -631,7 +646,7 @@ class Robot {
     const strings = [].slice.call(arguments, 1)
     const envelope = { room }
 
-    this.adapter.send.apply(this.adapter, [envelope].concat(strings))
+    this.chatAdapter.send.apply(this.chatAdapter, [envelope].concat(strings))
   }
 
   // Public: A wrapper around the EventEmitter API to make usage
@@ -665,20 +680,32 @@ class Robot {
   //
   // Returns nothing.
   run () {
-    this.emit('running')
+    let brainReady = new Promise((resolve) => this.brain.once('connected', resolve)) // Some brains connect immediately
+    this.loadStorageAdapter(this.config.storageAdapter)
+    this.loadChatAdapter(this.config.chatAdapter)
+    let chatReady = new Promise((resolve) => this.chatAdapter.once('connected', resolve))
 
-    this.adapter.run()
+    let robotReady = Promise.all([brainReady, chatReady])
+    .then(() => {
+      playbook.use(this) // make playbook available to all scripts
+      this.loadScripts('./scripts')
+      this.emit('running')
+      return this;
+    })
+
+    this.chatAdapter.run()
   }
 
   // Public: Gracefully shutdown the robot process
   //
   // Returns nothing.
   shutdown () {
+    this.logger.info('Shutting down')
     if (this.pingIntervalId != null) {
       clearInterval(this.pingIntervalId)
     }
     process.removeListener('uncaughtException', this.onUncaughtException)
-    this.adapter.close()
+    this.chatAdapter.close()
     if (this.server) {
       this.server.close()
     }

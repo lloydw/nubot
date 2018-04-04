@@ -27,7 +27,12 @@ module.exports = {
   TopicMessage: Message.TopicMessage,
   CatchAllMessage: Message.CatchAllMessage,
 
-  loadBot (adapterName, storageAdapter, enableHttpd, botName, botAlias, logLevel) {
-    return new module.exports.Robot(adapterName, storageAdapter, enableHttpd, botName, botAlias, logLevel)
+  runBot(config) {
+    var bot = new Robot(config);
+    if (process.platform !== 'win32') {
+      process.on('SIGTERM', () => bot.shutdown())
+      process.on('SIGINT', () => bot.shutdown())
+    }
+    return bot.run();
   }
 }
